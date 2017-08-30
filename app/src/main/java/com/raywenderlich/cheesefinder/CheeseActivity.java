@@ -22,17 +22,30 @@
 
 package com.raywenderlich.cheesefinder;
 
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
+
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import io.reactivex.Observable;
 import io.reactivex.ObservableEmitter;
 import io.reactivex.ObservableOnSubscribe;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.disposables.Disposable;
 import io.reactivex.functions.Cancellable;
+import io.reactivex.functions.Consumer;
+import io.reactivex.functions.Function;
+import io.reactivex.functions.Predicate;
+import io.reactivex.schedulers.Schedulers;
 
 public class CheeseActivity extends BaseSearchActivity {
     private ObservableEmitter<String> emitter;
+    private Observable<String> searchTextObservableButton;
+    private Observable<String> textChangeObservable;
     private Observable<String> searchTextObservable;
-
+    private Disposable mDisposable;
     public ObservableEmitter<String> getEmitter() {
         return emitter;
     }
@@ -41,37 +54,113 @@ public class CheeseActivity extends BaseSearchActivity {
         this.emitter = emitter;
     }
 
-    private ObservableOnSubscribe<String> observableOnSubscribe = new ObservableOnSubscribe<String>() {
+    private ObservableOnSubscribe<String> searchButtonObservableOnSubscribe = new ObservableOnSubscribe<String>() {
 
         @Override
         public void subscribe(ObservableEmitter<String> emitter) throws Exception {
             setEmitter(emitter);
             mSearchButton.setOnClickListener(mSearchButtonOnClickListener);
-            emitter.setCancellable(cancellable);
+            emitter.setCancellable(searchButtonObservableCancellable);
         }
     };
-    private Cancellable cancellable = new Cancellable() {
+    private ObservableOnSubscribe<String> textChangeObservableOnSubscribe = new ObservableOnSubscribe<String>() {
+
+        @Override
+        public void subscribe(ObservableEmitter<String> emitter) throws Exception {
+            setEmitter(emitter);
+            mQueryEditText.addTextChangedListener(watcher);
+            emitter.setCancellable(textChangeObservableCancellable);
+        }
+    };
+    private TextWatcher watcher = new TextWatcher() {
+        @Override
+        public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+        }
+
+        @Override
+        public void afterTextChanged(Editable s) {
+        }
+
+        //4
+        @Override
+        public void onTextChanged(CharSequence s, int start, int before, int count) {
+            getEmitter().onNext(s.toString());
+        }
+    };
+
+    private Cancellable searchButtonObservableCancellable = new Cancellable() {
         @Override
         public void cancel() throws Exception {
             mSearchButton.setOnClickListener(null);
         }
     };
+    private Cancellable textChangeObservableCancellable = new Cancellable() {
+        @Override
+        public void cancel() throws Exception {
+            mQueryEditText.removeTextChangedListener(watcher);
+        }
+    };
 
     private Observable<String> createButtonClickObservable() {
-        return Observable.create(observableOnSubscribe);
+        return Observable.create(searchButtonObservableOnSubscribe);
     }
 
+    private Observable<String> createTextChangeObservable() {
+        return Observable
+                .create(textChangeObservableOnSubscribe)
+                .filter(predicateFilter)
+                .debounce(1000, TimeUnit.MILLISECONDS);
+    }
+
+    private Predicate<String> predicateFilter = new Predicate<String>() {
+        @Override
+        public boolean test(String query) throws Exception {
+            return query.length() >= 2;
+        }
+    };
     private View.OnClickListener mSearchButtonOnClickListener = new View.OnClickListener() {
         @Override
         public void onClick(View view) {
             getEmitter().onNext(mQueryEditText.getText().toString());
         }
     };
+    private Consumer<List<String>> consumer = new Consumer<List<String>>() {
+        @Override
+        public void accept(List<String> query) throws Exception {
+            hideProgressBar();
+            showResult(query);
+        }
+    };
+    private Consumer<String> viewConsumer = new Consumer<String>() {
+        @Override
+        public void accept(String a) throws Exception {
+            showProgressBar();
+        }
+    };
 
     @Override
     protected void onStart() {
         super.onStart();
-        searchTextObservable = createButtonClickObservable();
-
+        createObservable();
     }
+
+    private void createObservable() {
+        searchTextObservableButton = createButtonClickObservable();
+        textChangeObservable = createTextChangeObservable();
+        searchTextObservable = Observable.merge(searchTextObservableButton, textChangeObservable);
+        searchTextObservable
+                .observeOn(AndroidSchedulers.mainThread())
+                .doOnNext(viewConsumer)
+                .observeOn(Schedulers.io())
+                .map(mappingFunction)
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(consumer);
+    }
+
+    private Function<String, List<String>> mappingFunction = new Function<String, List<String>>() {
+        @Override
+        public List<String> apply(String query) throws Exception {
+            return mCheeseSearchEngine.search(query);
+        }
+    };
 }
