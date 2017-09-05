@@ -46,6 +46,7 @@ public class CheeseActivity extends BaseSearchActivity {
     private Observable<String> textChangeObservable;
     private Observable<String> searchTextObservable;
     private Disposable mDisposable;
+
     public ObservableEmitter<String> getEmitter() {
         return emitter;
     }
@@ -144,11 +145,19 @@ public class CheeseActivity extends BaseSearchActivity {
         createObservable();
     }
 
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (!mDisposable.isDisposed()) {
+            mDisposable.dispose();
+        }
+    }
+
     private void createObservable() {
         searchTextObservableButton = createButtonClickObservable();
         textChangeObservable = createTextChangeObservable();
         searchTextObservable = Observable.merge(searchTextObservableButton, textChangeObservable);
-        searchTextObservable
+        mDisposable = searchTextObservable
                 .observeOn(AndroidSchedulers.mainThread())
                 .doOnNext(viewConsumer)
                 .observeOn(Schedulers.io())
